@@ -2,6 +2,7 @@ package notify
 
 import (
 	"log"
+	"strings"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -75,7 +76,7 @@ func (o *ObserverNotify) Run() {
 					if !ok {
 						return
 					}
-					if event.Name != o.Directory+o.Filename && o.Filename != "*" {
+					if !strings.HasSuffix(event.Name, o.Filename) && o.Filename != "*" {
 						continue
 					}
 					event1 := (Event)(event)
