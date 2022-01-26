@@ -3,58 +3,52 @@ package notify
 import (
 	"log"
 
-	"github.com/arturoeanton/gocommons/utils"
 	"github.com/fsnotify/fsnotify"
 )
 
 type ObserverNotify struct {
-	Filename string
-	Content  string
-	dev      bool
-	Watcher  *fsnotify.Watcher
-	fxWrite  func(observer *ObserverNotify)
-	fxCreate func(observer *ObserverNotify)
-	fxRemove func(observer *ObserverNotify)
-	fxRename func(observer *ObserverNotify)
-	fxChmod  func(observer *ObserverNotify)
+	Filename     string
+	Directory    string
+	Watcher      *fsnotify.Watcher
+	CurrentEvent *fsnotify.Event
+	fxWrite      func(observer *ObserverNotify, event *Event)
+	fxCreate     func(observer *ObserverNotify, event *Event)
+	fxRemove     func(observer *ObserverNotify, event *Event)
+	fxRename     func(observer *ObserverNotify, event *Event)
+	fxChmod      func(observer *ObserverNotify, event *Event)
 }
+type Event fsnotify.Event
 
-func (o *ObserverNotify) Dev(f bool) {
-	o.dev = f
-}
-
-func (o *ObserverNotify) FxCreate(fxCreate func(observer *ObserverNotify)) *ObserverNotify {
+func (o *ObserverNotify) FxCreate(fxCreate func(observer *ObserverNotify, event *Event)) *ObserverNotify {
 	o.fxCreate = fxCreate
 	return o
 }
-func (o *ObserverNotify) FxWrite(fxWrite func(observer *ObserverNotify)) *ObserverNotify {
+func (o *ObserverNotify) FxWrite(fxWrite func(observer *ObserverNotify, event *Event)) *ObserverNotify {
 	o.fxWrite = fxWrite
 	return o
 }
-func (o *ObserverNotify) FxRemove(fxRemove func(observer *ObserverNotify)) *ObserverNotify {
+func (o *ObserverNotify) FxRemove(fxRemove func(observer *ObserverNotify, event *Event)) *ObserverNotify {
 	o.fxRemove = fxRemove
 	return o
 }
-func (o *ObserverNotify) FxRename(fxRename func(observer *ObserverNotify)) *ObserverNotify {
+func (o *ObserverNotify) FxRename(fxRename func(observer *ObserverNotify, event *Event)) *ObserverNotify {
 	o.fxRename = fxRename
 	return o
 }
-func (o *ObserverNotify) FxChmod(fxChmod func(observer *ObserverNotify)) *ObserverNotify {
+func (o *ObserverNotify) FxChmod(fxChmod func(observer *ObserverNotify, event *Event)) *ObserverNotify {
 	o.fxChmod = fxChmod
 	return o
 }
 
-func NewObserverNotify(filename string) *ObserverNotify {
-	content, _ := utils.FileToString(filename)
+func NewObserverNotify(directory string, filename string) *ObserverNotify {
 	observer := &ObserverNotify{
-		Filename: filename,
-		Content:  content,
-		dev:      false,
-		fxWrite:  func(observer *ObserverNotify) {},
-		fxCreate: func(observer *ObserverNotify) {},
-		fxRemove: func(observer *ObserverNotify) {},
-		fxRename: func(observer *ObserverNotify) {},
-		fxChmod:  func(observer *ObserverNotify) {},
+		Filename:  filename,
+		Directory: directory,
+		fxWrite:   func(observer *ObserverNotify, event *Event) {},
+		fxCreate:  func(observer *ObserverNotify, event *Event) {},
+		fxRemove:  func(observer *ObserverNotify, event *Event) {},
+		fxRename:  func(observer *ObserverNotify, event *Event) {},
+		fxChmod:   func(observer *ObserverNotify, event *Event) {},
 	}
 	return observer
 }
@@ -68,6 +62,11 @@ func (o *ObserverNotify) Run() {
 		}
 		defer o.Watcher.Close()
 
+		err = o.Watcher.Add(o.Directory)
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		done := make(chan bool)
 		go func() {
 			for {
@@ -76,44 +75,21 @@ func (o *ObserverNotify) Run() {
 					if !ok {
 						return
 					}
+					if event.Name != o.Directory+o.Filename && o.Filename != "*" {
+						continue
+					}
+					event1 := (Event)(event)
 					switch {
 					case event.Op&fsnotify.Write == fsnotify.Write:
-						if o.dev {
-							log.Println("WRITE", event.Name)
-						}
-						o.fxWrite(o)
-						err = o.Watcher.Remove(o.Filename)
-						err = o.Watcher.Add(o.Filename)
+						o.fxWrite(o, &event1)
 					case event.Op&fsnotify.Create == fsnotify.Create:
-						if o.dev {
-							log.Println("CREATE", event.Name)
-						}
-						o.fxCreate(o)
+						o.fxCreate(o, &event1)
 					case event.Op&fsnotify.Remove == fsnotify.Remove:
-						if o.dev {
-							log.Println("REMOVE", event.Name)
-						}
-						o.fxRemove(o)
+						o.fxRemove(o, &event1)
 					case event.Op&fsnotify.Rename == fsnotify.Rename:
-						if o.dev {
-							log.Println("RENAME", event.Name)
-						}
-						o.fxRename(o)
-						err = o.Watcher.Remove(o.Filename)
-						err = o.Watcher.Add(event.Name)
+						o.fxRename(o, &event1)
 					case event.Op&fsnotify.Chmod == fsnotify.Chmod:
-						if o.dev {
-							log.Println("CHMOD", event.Name)
-						}
-						o.fxChmod(o)
-					}
-					if o.dev {
-						log.Println("event:", event)
-					}
-					if event.Op&fsnotify.Write == fsnotify.Write {
-						if o.dev {
-							log.Println("modified file:", event.Name)
-						}
+						o.fxChmod(o, &event1)
 					}
 				case err, ok := <-o.Watcher.Errors:
 					if !ok {
@@ -123,11 +99,6 @@ func (o *ObserverNotify) Run() {
 				}
 			}
 		}()
-
-		err = o.Watcher.Add(o.Filename)
-		if err != nil {
-			log.Fatal(err)
-		}
 		<-done
 	}()
 }
